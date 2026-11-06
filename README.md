@@ -1,4 +1,12 @@
-# dsh-providers-hub
+# dsh-providers-hub-plus
+
+> **这是 [`dsh-providers-hub`](https://github.com/iJetLi/dsh-providers-hub) 的个人发布版**
+> （包名 `dsh-providers-hub-plus`）。功能跟上游同步，只改包名与发布方式 —— 这样它与原包
+> 在 npm 与 profile 里都**不会互相覆盖**。
+>
+> ⚠️ **不要与原包同时启用**：两者注册的是同一套 provider id（`codearts` / `buddy` / `qoder`
+> 等），同时启用会在模型选择器里出现两套同名供应商。装好本包后请把 `dsh-providers-hub` 停用
+> （或 `pnpm remove dsh-providers-hub`）。
 
 > **本包原名 `dsh-codearts-auth`**（`0.2.0-rc.11` 起改名）。老用户的 DSH profile 里
 > 还锁着旧名时，**插件会加载失败并被自动禁用**（宿主报 `N entry did not activate`，

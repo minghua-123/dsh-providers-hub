@@ -114,7 +114,7 @@ export function JetHubMainPanel({ rpcCall }) {
   if (typeof rpcCall !== 'function') return null;
   return React.createElement(
     'div',
-    { className: 'dim-jh-panelHost', 'data-plugin': 'dsh-providers-hub' },
+    { className: 'dim-jh-panelHost', 'data-plugin': 'dsh-providers-hub-plus' },
     React.createElement(JetHubPageForMain, { rpcCall }),
   );
 }

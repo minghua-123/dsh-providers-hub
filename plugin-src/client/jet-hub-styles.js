@@ -1809,7 +1809,7 @@ const STYLES = `
 
 
 /**
- * 本插件的**包 id** —— 必须等于 package.json 的 name（当前 dsh-providers-hub）。
+ * 本插件的**包 id** —— 必须等于 package.json 的 name（当前 dsh-providers-hub-plus）。
  *
  * ⚠️ 它同时是宿主 claimStyles / removeOwnedStyles 用的 ownerId
  * （dsh-client-modules 的 stripClientSuffix(registration.id)），
@@ -1826,7 +1826,7 @@ const STYLES = `
  * ⚠️ 上面这段注释**刻意不写反引号**：紧邻其上的 STYLES 是模板字符串，
  * 注释里出现反引号会提前闭合它（AGENTS.md 明令禁止；本文件已有四个用例在守）。
  */
-const PLUGIN_ID = 'dsh-providers-hub'
+const PLUGIN_ID = 'dsh-providers-hub-plus'
 
 /** 样式标签的资源标识（宿主 data-plugin-css 的语义，见下）。 */
 const STYLE_TAG_ID = PLUGIN_ID + '/jet-hub.css'

@@ -174,7 +174,7 @@ export function apply(ctx) {
    */
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
     name: 'plugins.bundle.config',
-    key: 'dsh-providers-hub',
+    key: 'dsh-providers-hub-plus',
     inject: () => ({ rpcCall }),
   }, JetHubPanelEntryCardGuarded))
 
