@@ -99,6 +99,10 @@ gh release create v<版本> dsh-providers-hub-plus-<版本>.tgz \
 Release 说明建议写三段：本次改了什么、升级方式（`npm i dsh-providers-hub-plus@<版本>` 或插件市场安装）、
 以及「不要与原包 `dsh-providers-hub` 同时启用」。
 
+> 说明文本请**先写进文件**再用 `--notes-file` 引用。在 PowerShell 里用双引号 here-string 拼说明会踩转义坑：
+> 反引号是转义符，`` `a `` = 响铃、`` `0 `` = NUL、`` `b `` = 退格，都会变成不可见控制字符，页面上显示成乱码方块；
+> 而 `` `$ `` 又会让变量不插值。git 提交信息同理，优先用单引号。
+
 ## 6. 本机安装 / 升级
 
 插件市场安装，或在 profile 目录手动装：
