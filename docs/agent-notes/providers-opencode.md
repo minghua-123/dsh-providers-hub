@@ -776,3 +776,59 @@ key = sk-<40×a>-d-e-f-g  ⇒  {"ok":false,"error":{"message":"credential ref \"
 - `tests/unit/opencode-client-panel.spec.ts`：两条文案断言
 - `tests/unit/repo-pii-guard.spec.ts` + `scripts/audit-repo-secrets.mjs`：新增 `oc_sk_` 泄漏判据
   （放宽入库闸门必须同步放宽**泄漏**闸门，否则新形态泄漏是静默的）
+
+## ⚠️⚠️ 2026-11-06 实测：匿名免费通道**只放行官方客户端进程**（桥已落地）
+
+用户报障「插件 429 / 官方 App 能用」。**这不是额度用尽**，也不是等一会儿就好：
+同一分钟、同一出口 IP、同一份 44 KB 官方请求体，差异只落在**谁发的请求**上。
+
+| 发起方 | 结果 |
+|---|---|
+| 官方 `opencode-cli.exe run --model opencode/pulse-alpha-free` | **200**（14:43/14:44/14:47/14:48/15:0x 连跑全通） |
+| `wreq-js` + Bun 形状 `tlsOptions`（本插件 10-26 落地的传输层） | **429 `FreeUsageLimitError`** |
+| 真 `bun.exe` 1.4.2 + 逐字节照抄的首部 | **偶发 200，随后恒 429** |
+| `curl.exe`（Schannel）/ `python3` raw TLS（OpenSSL） | **恒 429 / RST** |
+| 经自写反向代理转发（HTTP/1.1，逐字节保留首部） | **429**（保留 `Accept-Encoding` 时直接 RST） |
+
+**逐项排除过的判据**：首部（含 `b3`/`traceparent`/四个 session 头/真实 projectID）、
+session id 外形（官方 `ses_`+12hex+14base62 与派生版都试）、`Accept`、
+出口 IP（两侧 `cdn-cgi/trace` 同为 `ip=36.60.72.128 colo=LAX`）、HTTP 版本
+（该 host **不 ALPN h2**，`curl --http2` 实测仍 `http_version=1.1`）。
+⇒ 只剩客户端自身（TLS 栈/进程身份）与请求语义两类因素，**插件直连这条路封死**。
+
+上游 `Retry-After` 逐秒递减并**收敛到同一绝对时刻**（当天 `00:00Z`＝北京 08:00），
+说明免费额度是**按 UTC 自然日重置的统一桶**，与「24h 滚动窗口」不是一回事
+（`FREE_USAGE_DEFAULT_MS` 24h 兜底只用于本地冷却，不代表上游语义）。
+
+### 落地的「新匿名槽」= 本机官方客户端桥
+
+`src/opencode-local-bridge.ts`：读 `~/.local/state/opencode/service.json`
+（`url` + `password`），鉴权是 **HTTP Basic `opencode:<password>`**（`Bearer` 与
+`:pw`/`pw:` 都 401），先 `GET /api/info` 验活，再
+`POST /api/session`（带 `model:{id,providerID:'opencode'}`）→
+`POST /api/session/<id>/generate {"prompt":"…"}` → `DELETE /api/session/<id>`。
+
+**为什么必须绕这一圈**：同一进程内 `POST /api/experimental/generate/text`
+（无会话上下文）实测 **429**，而会话内的 `…/generate` **200 `{"data":{"text":"pong"}}`（1.6 s）**
+⇒ 官方客户端只在**会话上下文**里被放行。`generate` 是「瞬态生成，不写会话历史」。
+
+**接入点**：`OpencodeAdapter.stream()` 里 `pickSlot` 返回 `undefined`（所有槽都试完）
+且模型是免费模型时，先试桥；桥不可用才抛原来的 `QUOTA_EXCEEDED`。
+文案同步重写（`restrictedMessage`）：明确说「等 24 小时/换 key/换代理都无效」，
+因为它确实是无效动作。
+
+**⚠️ 这是降级通道**，必须让用户知道：官方 `generate` 入参只有 `prompt: string`
+⇒ ① 没有 tool calling；② 不能设 system 角色（只能拼进正文、用 `[role]` 标注）；
+③ 没有流式（一次性返回）。故调用一次就 `warn` 一次。
+
+**开关**：`DSH_OPENCODE_LOCAL_BRIDGE=0` 关掉桥；
+单测由 `vitest.config.ts` 注入 `DSH_UNIT_TEST_NO_LOCAL_BRIDGE=1`
+（否则开发机上装着官方客户端时，单测会真的建会话花额度，并让「已发请求数」类断言多一次
+`/api/info` 而**假失败** —— 实测撞过）。
+
+**DSML**：桥是**第 10 个正文出口**，`streamLocalBridgeAnswer` 已接
+`createDsmlMarkerNormalizer`（整段 `push` 后立即 `flush`），
+`dsml-normalizer-coverage.spec.ts` 的 ①②③ 覆盖它。
+
+**守卫**：`tests/unit/opencode-local-bridge.spec.ts`（8 条：服务文件缺失/口令失效 401/
+缺字段/建会话-生成-删会话请求形状/失败即抛/空文本不当成功）。

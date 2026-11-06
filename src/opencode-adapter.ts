@@ -1,4 +1,45 @@
 /**
+ * 本机官方客户端桥的开关。
+ *
+ * 桥**依赖本机环境**（`~/.local/state/opencode/service.json` + 一个跑着的
+ * `opencode serve`），所以：
+ *
+ * - `DSH_OPENCODE_LOCAL_BRIDGE=0` ⇒ 用户/运维显式关掉（例如不想让插件驱动官方客户端）；
+ * - `DSH_UNIT_TEST_NO_LOCAL_BRIDGE=1` ⇒ 单测里默认关闭。⚠️ 这条**必须**有：
+ *   开发机上装了官方客户端时，单测会真的建会话、真的花掉免费额度，且
+ *   「已发出的请求数」这类断言会多出一次 `/api/info` 探测而假失败（实测过）。
+ *   想专门测桥的用例把 `DSH_OPENCODE_LOCAL_BRIDGE=1` 设上即可越过。
+ */
+function localBridgeDisabled(): boolean {
+  if (process.env.DSH_OPENCODE_LOCAL_BRIDGE === '0') return true
+  return process.env.DSH_UNIT_TEST_NO_LOCAL_BRIDGE === '1' && process.env.DSH_OPENCODE_LOCAL_BRIDGE !== '1'
+}
+
+/**
+ * 把 DSH 的请求拍成官方客户端本地桥能吃的一整段文本。
+ *
+ * ⚠️ 官方 `POST /api/session/<id>/generate` 的入参**只有 `prompt: string`**
+ * （`/openapi.json` 实测），没有 role、没有 tools ⇒ 只能把 system 与历史
+ * 拼成正文、用 `[角色]` 标注。这是桥的固有降级，不是实现偷懒。
+ *
+ * ⚠️ **丢弃 tools 必须留痕**：本函数不处理 `options.tools`，故调用方会先
+ * `warn` 一次（见 `localBridgeAnswer`）—— 静默丢工具是「模型看起来不会用工具」
+ * 这类最难查的缺陷。
+ */
+function buildLocalBridgePrompt(options: GenerateOptions): string {
+  const parts: string[] = []
+  if (options.system !== undefined && options.system.length > 0) {
+    parts.push(`[system]\n${options.system}`)
+  }
+  for (const message of options.messages) {
+    const text = contentToText(message.content).trim()
+    if (text.length === 0) continue
+    parts.push(`[${message.role}]\n${text}`)
+  }
+  return parts.join('\n\n')
+}
+
+/**
  * 某模型的输入模态（`LlmModelInfo` / `LlmResolvedModelInfo` 共用）。
  *
  * ⚠️ **能力表缺失时一律回退 `['text']`** —— 这是本仓库的硬约定：
@@ -47,6 +88,7 @@ import { deriveRequestId, deriveSessionId, opencodeHeaders, opencodeUserAgent } 
 import { buildOpencodeRequest } from './opencode-messages.js'
 import { bunTlsFetch, BunTlsUnavailableError } from './opencode-bun-tls.js'
 import { normalizeOpencodeResponse } from './opencode-stream.js'
+import { createDsmlMarkerNormalizer } from './sse.js'
 import {
   getOpencodeCapabilitiesSync, opencodeEffortName, supportsOpencodeImage,
   type OpencodeModelCapability,
@@ -54,7 +96,10 @@ import {
 import { proxyFetch } from './opencode-proxy.js'
 import type { NormalizedProxy } from './opencode.js'
 import { createModelCatalog, type CatalogEntry, type ModelCatalog } from './model-catalog.js'
-import { consumeOpenAiSse, collectImages, httpErrorCode, serializeMessages } from './openai-compat.js'
+import { consumeOpenAiSse, collectImages, contentToText, httpErrorCode, serializeMessages } from './openai-compat.js'
+import {
+  discoverOpencodeLocalService, generateViaOpencodeLocalService, isLocalService,
+} from './opencode-local-bridge.js'
 import { registerAdapterIdempotent } from './llm-register-compat.js'
 import { reportLedgerAccount } from './token-ledger.js'
 import { retryAfterMsFromResponse } from './retry-after.js'
@@ -484,10 +529,19 @@ export class OpencodeAdapter extends LlmAdapter {
       const slot = pickSlot(slots, options.model, tried)
       if (slot === undefined) {
         // 全 tried ⇒ 每个槽都试过一次。收费模型走到这里通常是「没有账号槽」。
-        throw new LlmError(
-          `opencode: 所有通道对该模型均受限${limited.length > 0 ? `（${limited.join('、')}）` : ''}`,
-          'QUOTA_EXCEEDED',
-        )
+        //
+        // ⚠️ **先试本机官方客户端桥**（2026-11-06 新增，issue 见
+        // `opencode-local-bridge.ts` 文件头）：匿名免费通道现在只在官方客户端
+        // 进程内被放行，插件直连恒 429；桥是唯一还能出模型的路。桥不可用
+        // （没装/没跑官方客户端）时才落回下面的原始错误。
+        if (isFreeOpencodeModel(options.model)) {
+          const bridged = await this.localBridgeAnswer(options)
+          if (bridged !== undefined) {
+            yield* this.streamLocalBridgeAnswer(bridged)
+            return
+          }
+        }
+        throw new LlmError(this.restrictedMessage(limited, slots.length), 'QUOTA_EXCEEDED')
       }
       tried.add(slot.id)
       // Token 账本（第 2 期）：回报「本笔请求实际使用的槽」（匿名槽 = 'anonymous'）。
@@ -574,6 +628,75 @@ export class OpencodeAdapter extends LlmAdapter {
         limited.push(`${slot.id}(${info.kind})`)
       }
     }
+  }
+
+  /**
+   * 「所有通道都受限」的对外文案（2026-11-06 重写）。
+   *
+   * ⚠️ 原文案只有一句「所有通道对该模型均受限（xxx(free_usage_limit)）」——
+   * 它让用户以为「等额度重置就好」，而真因是**上游只放行官方客户端进程**：
+   * 同一分钟、同一出口 IP，官方 `opencode-cli` 200、插件直连 429，逐字节照抄
+   * 请求也无用（对照矩阵见 `opencode-local-bridge.ts` 文件头）。
+   * 等 24 小时、换 key、换代理**全是无效动作**，所以文案必须把它们排除掉。
+   */
+  private restrictedMessage(limited: readonly string[], slotCount: number): string {
+    const head = `opencode: 所有通道对该模型均受限${limited.length > 0 ? `（${limited.join('、')}）` : ''}`
+    if (!limited.some((item) => item.includes('free_usage_limit'))) return head
+    return `${head}。匿名免费通道已不再放行第三方客户端（插件直连恒 429，官方 App 正常）；`
+      + '本机也没有发现运行中的 OpenCode 官方客户端可供兜底。请启动官方 App 后重试，'
+      + '或在 Jet Hub 的 OpenCode 面板添加 API key 账号 / 订阅 OpenCode Go'
+      + (slotCount <= 1 ? '（当前只有匿名槽，等到额度重置也不会好）' : '')
+  }
+
+  /**
+   * 用本机官方客户端的本地服务兜底生成（「新匿名槽」）。
+   *
+   * 只在**免费模型 + 所有槽都试完**时调用。任何失败都返回 `undefined` 让调用方
+   * 落回原始错误 —— 桥不可用是个**环境事实**（没装/没跑官方客户端），不能顶替
+   * 「上游为什么拒绝」这个结论。
+   */
+  private async localBridgeAnswer(options: GenerateOptions): Promise<string | undefined> {
+    if (localBridgeDisabled()) return undefined
+    const discovered = await discoverOpencodeLocalService()
+    if (!isLocalService(discovered)) {
+      this.options.warn?.(`opencode: 本机 OpenCode 官方客户端桥不可用 —— ${discovered.reason}`)
+      return undefined
+    }
+    // ⚠️ 降级必须说出来：桥只有 `prompt → text`，没有 tool calling、不能设
+    // system 角色、也不是流式。静默降级会让用户以为工具坏了。
+    this.options.warn?.(
+      'opencode: 免费通道直连被上游拒绝，已改走本机 OpenCode 官方客户端'
+      + `（${discovered.version ?? '未知版本'}；降级：本次回复无工具调用、非流式）`,
+    )
+    try {
+      return await generateViaOpencodeLocalService({
+        service: discovered,
+        model: options.model,
+        prompt: buildLocalBridgePrompt(options),
+        ...options.signal === undefined ? {} : { signal: options.signal },
+      })
+    } catch (error) {
+      this.options.warn?.(`opencode: 官方客户端桥调用失败 —— ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * 把桥拿到的一整段文本摊成标准 `StreamChunk` 序列（无流式，一次吐完）。
+   *
+   * ⚠️ 必须过 DSML 归一化：这是**正文出口**，DeepSeek 系模型会把工具调用吐成
+   * `<｜DSML｜…>` 文本，不过归一化就会被当成普通回答（2026-10-13 事故），
+   * `dsml-normalizer-coverage.spec.ts` 也会拦。桥的文本是一次性整段，故
+   * `push` 之后**立刻 `flush`**（没有后续帧可等）。
+   */
+  private async *streamLocalBridgeAnswer(text: string): AsyncIterable<StreamChunk> {
+    const dsmlFix = createDsmlMarkerNormalizer()
+    const normalized = dsmlFix.push(text) + dsmlFix.flush()
+    if (normalized.length === 0) throw new LlmError('opencode: 官方客户端桥返回空内容', 'EMPTY_RESPONSE')
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: normalized }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: normalized } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
   }
 
   /**

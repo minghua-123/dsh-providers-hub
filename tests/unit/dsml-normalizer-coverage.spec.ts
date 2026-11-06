@@ -60,6 +60,11 @@ describe('DSML 归一化接线覆盖（防回归）', () => {
       'lobsterai-adapter.ts',
       'minimax-messages.ts',
       'openai-compat.ts',
+      // ⚠️ opencode-adapter.ts（2026-11-06 新增）：免费模型的「官方客户端桥」
+      //    兜底路径自己产出正文（官方 `generate` 没有流式、也不走 SSE 归一化），
+      //    于是它成了第 10 个正文出口 ⇒ 已在 `streamLocalBridgeAnswer` 里接入
+      //    `createDsmlMarkerNormalizer`（整段 push 后立即 flush），②③ 覆盖它。
+      'opencode-adapter.ts',
       'trae-adapter.ts',
       'zcode-anthropic.ts',
     ])

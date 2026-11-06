@@ -54,6 +54,12 @@ export default defineConfig({
       // `vi.mock('undici')` 桩重新生效。e2e 配置（vitest.e2e.config.ts）
       // **不注入**本 env ⇒ 真机验收路径不受影响；生产环境同样不设。
       DSH_UNIT_TEST_NO_WREQ: '1',
+      // ⚠️ 同一条纪律的**第二面**（2026-11-06）：opencode 的「本机官方客户端桥」
+      // （`src/opencode-local-bridge.ts`）会读 `~/.local/state/opencode/service.json`
+      // 并真的向 `http://127.0.0.1:28894` 建会话生成。开发机装着官方客户端时，
+      // 单测就会真花免费额度，且「已发请求数」类断言会多一次 `/api/info` 探测
+      // 而假失败。本 env 只影响单测；e2e 与生产都不设置。
+      DSH_UNIT_TEST_NO_LOCAL_BRIDGE: '1',
     },
   },
 })

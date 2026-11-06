@@ -781,15 +781,18 @@ export function OpencodeKeyModal({ error, busy, inputRef, onSubmit, onSubmitAnon
             ))
         : React.createElement('div', { className: 'dim-jh-modalBody' },
             React.createElement('p', { className: 'dim-jh-modalHint' },
-              '匿名通道无需任何凭据（上游认字面量 public），用于免费模型。'
-              + '可以添加多条，每条可单独设置出口代理。'),
-            // ⚠️⚠️ **诚实说明指纹不增加配额**：匿名通道按出口 IP 限额
-            // （实测：换 key、换伪装头、换指纹全部无效）。要多份额度只能给
-            // 不同匿名通道配**不同代理**；指纹分离的价值是防关联。
-            // 不说清楚的话，用户加 5 条匿名通道却只看到一份额度，会以为坏了。
+              '匿名通道无需任何凭据（上游认字面量 public），用于免费模型。'),
+            // ⚠️⚠️ **2026-11-06 更正（实测推翻旧口径）**：旧文案说「匿名按出口 IP
+            // 限额，多配几条不同代理就能多份额度」—— 实测**换 key、换伪装头、
+            // 换指纹、换出口 IP 全部无效**：上游只放行官方客户端自身发的请求
+            // （同一分钟、同一 IP，官方 CLI 200、插件直连 429，见
+            // `docs/agent-notes/providers-opencode.md`）。代理仍可用于账号槽的
+            // 出口隔离，但它**不再能放大匿名额度**，继续这么写就是误导用户去
+            // 白配一堆代理。
             React.createElement('p', { className: 'dim-jh-hint' },
-              '注意：匿名通道的额度按「出口 IP」计算。多条匿名通道若共用同一个出口，'
-              + '额度不会增加；给它们分别配置不同代理，才会各自获得独立额度。'),
+              '注意：匿名通道现在只能经本机 OpenCode 官方客户端使用 —— '
+              + '上游已不再放行第三方客户端，换代理、换出口 IP、换 key 都无法恢复直连，'
+              + '代理也不会放大额度。桥接时回复没有工具调用、也不是流式。'),
             error
               ? React.createElement('p', { className: 'dim-jh-error', role: 'alert' }, '添加失败：' + error)
               : null,
