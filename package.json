@@ -19,6 +19,9 @@
     "locale/*.json",
     "cordis.patch.yml"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:client": "node plugin-src/client/build.mjs",
