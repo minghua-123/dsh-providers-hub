@@ -22,6 +22,7 @@ export interface LiteState {
   opencodeDisabledModels: string[]
   opencodeIncludeDeprecated: boolean
   modelscopeApiKey: string
+  modelscopeDisabledModels: string[]
 }
 
 const STATE_FILE = 'lite-state.json'
@@ -32,6 +33,7 @@ function emptyState(): LiteState {
     opencodeDisabledModels: [],
     opencodeIncludeDeprecated: false,
     modelscopeApiKey: '',
+    modelscopeDisabledModels: [],
   }
 }
 
@@ -58,6 +60,7 @@ function coerce(raw: unknown): LiteState {
     opencodeDisabledModels: stringList(value.opencodeDisabledModels),
     opencodeIncludeDeprecated: value.opencodeIncludeDeprecated === true,
     modelscopeApiKey: typeof value.modelscopeApiKey === 'string' ? value.modelscopeApiKey : '',
+    modelscopeDisabledModels: stringList(value.modelscopeDisabledModels),
   }
 }
 
@@ -80,6 +83,7 @@ export class PluginState {
       opencodeDisabledModels: [...this.data.opencodeDisabledModels],
       opencodeIncludeDeprecated: this.data.opencodeIncludeDeprecated,
       modelscopeApiKey: this.data.modelscopeApiKey,
+      modelscopeDisabledModels: [...this.data.modelscopeDisabledModels],
     }
   }
 

@@ -7,14 +7,16 @@ import { PluginState } from '../../src/plugin-state.js'
 import { maskApiKey } from '../../src/custom-provider-store.js'
 import type { CustomProviderConfig } from '../../src/custom-provider-types.js'
 import type { LiteState } from '../../src/plugin-state.js'
+import type { CustomFetcher } from '../../src/custom-provider-protocols.js'
 
 interface RegisteredRoute {
   path: string
   fetch: (request: Request) => Promise<Response>
 }
 
-function harness() {
+function harness(options: { catalogRows?: Array<{ id: string; name: string; disabled: boolean }> } = {}) {
   const routes: RegisteredRoute[] = []
+  const probeCalls: Array<{ url: string; model?: unknown }> = []
   const connection = {
     fetch: { register: (route: RegisteredRoute): void => { routes.push(route) } },
   }
@@ -38,8 +40,24 @@ function harness() {
     applyState: (next): void => { applied.push(next) },
     onCatalog: (): void => {},
     warn: (): void => {},
+    probes: () => ({
+      modelscopeApiKey: 'ms-test-key',
+      customProviders: [],
+      fetcher: (async (url: string, init: { body?: unknown }) => {
+        let model: unknown
+        if (typeof init?.body === 'string') {
+          try { model = (JSON.parse(init.body) as { model?: unknown }).model } catch { model = undefined }
+        }
+        probeCalls.push({ url, model })
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }) as CustomFetcher,
+    }),
+    modelscopeCatalog: async () => options.catalogRows ?? [],
   })
-  return { route: routes[0], state, applied }
+  return { route: routes[0], state, applied, probeCalls }
 }
 
 async function invoke(route: RegisteredRoute, method: string, payload: Record<string, unknown> = {}, envelope?: Record<string, unknown>) {
@@ -131,5 +149,41 @@ describe('Jet Hub RPC 端点', () => {
     expect(response.result.ok).toBe(true)
     expect(state.snapshot().opencodeDisabledModels).toEqual(['free-a'])
     expect(applied).toHaveLength(1)
+  })
+
+  it('魔搭逐模型启停写入状态并触发接线层同步', async () => {
+    const { route, state, applied } = harness()
+    const response = await invoke(route, 'modelscope.setDisabled', { disabledModels: ['Qwen/Qwen3-8B'] })
+    expect(response.result.ok).toBe(true)
+    expect(state.snapshot().modelscopeDisabledModels).toEqual(['Qwen/Qwen3-8B'])
+    expect(applied).toHaveLength(1)
+  })
+
+  it('魔搭目录返回全量行，停用条目仍带 disabled 标记', async () => {
+    const { route } = harness({ catalogRows: [{ id: 'm1', name: 'M1', disabled: true }] })
+    const response = await invoke(route, 'modelscope.catalog')
+    expect(response.result.ok).toBe(true)
+    const value = response.result.value as { rows: Array<{ id: string; disabled: boolean }> }
+    expect(value.rows).toHaveLength(1)
+    expect(value.rows[0].disabled).toBe(true)
+  })
+
+  it('probe.model 把指定模型写进真实请求，业务结果不包成 RPC 失败', async () => {
+    const { route, probeCalls } = harness()
+    const response = await invoke(route, 'probe.model', { provider: 'modelscope', model: 'm-special' })
+    expect(response.result.ok).toBe(true)
+    const value = response.result.value as { ok: boolean; model: string }
+    expect(value.ok).toBe(true)
+    expect(value.model).toBe('m-special')
+    expect(probeCalls).toHaveLength(1)
+    expect(probeCalls[0].model).toBe('m-special')
+  })
+
+  it('probe 缺少参数返回可读错误且不发请求', async () => {
+    const { route, probeCalls } = harness()
+    const response = await invoke(route, 'probe.provider', {})
+    expect(response.result.ok).toBe(false)
+    expect(response.result.error?.message).toContain('供应商 id')
+    expect(probeCalls).toHaveLength(0)
   })
 })

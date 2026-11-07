@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Jet Hub",
-    "description": "登录并管理多家渠道账号，支持多账号池、凭据静默续期、模型列表开关、积分余额与每日签到。"
+    "title": "Jet Hub（精简版）",
+    "description": "OpenCode 免费档桥、魔搭官方接入与自定义供应商，支持 OpenAI 兼容 / Responses / Anthropic 三种接口。"
   }
 }

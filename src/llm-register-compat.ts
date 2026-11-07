@@ -43,9 +43,22 @@ export function registerAdapterIdempotent(
   }
 }
 
-/** 从 ctx 或 llm 服务取出注册目标。 */
+/**
+ * 从 Context 或 llm 服务本身取出注册目标。
+ *
+ * ⚠️ Cordis Context 是代理对象：任何未在 inject 中声明的属性读取都会抛
+ * `cannot get property "<prop>" without inject`，包括 `typeof ctx.registerAdapter`
+ * 这种看似无害的能力探测。因此必须先识别 Context（`get` 是自有方法，读取安全），
+ * 再用 `ctx.get('llm')` 惰性取服务；只有确认是普通对象时才做属性探测。
+ */
 export function registerTargetOf(llm: AdapterRegisterTarget | Context): AdapterRegisterTarget {
+  const get = (llm as Context).get
+  if (typeof get === 'function') {
+    const service = get.call(llm, 'llm') as AdapterRegisterTarget | undefined
+    if (service !== undefined && typeof service.registerAdapter === 'function') return service
+    throw new Error('llm 服务未就绪，无法注册适配器')
+  }
   const candidate = llm as AdapterRegisterTarget
   if (typeof candidate.registerAdapter === 'function') return candidate
-  return (llm as Context).llm as unknown as AdapterRegisterTarget
+  throw new Error('注册目标既不是 Cordis Context，也不含 registerAdapter')
 }

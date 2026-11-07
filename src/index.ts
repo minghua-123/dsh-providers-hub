@@ -22,6 +22,7 @@ import { CustomProvidersSchema } from './custom-provider-store.js'
 import type { CustomProviderRegisterDeps } from './custom-provider-adapter.js'
 import type { AdapterRegisterTarget } from './llm-register-compat.js'
 import { PluginState, type LiteState } from './plugin-state.js'
+import type { ProbeDeps } from './probe.js'
 import { registerJetHubRpc } from './jet-hub-rpc.js'
 import { mountOpenAiGateway } from './openai-gateway/index.js'
 import { suppressAutoSettingsPage } from './settings-compat.js'
@@ -40,13 +41,19 @@ export const Config = Schema.object({
   opencodeDisabledModels: Schema.array(Schema.string()).default([]).volatile(),
   opencodeIncludeDeprecated: Schema.boolean().default(false).volatile(),
   modelscopeApiKey: Schema.string().default('').volatile(),
+  modelscopeDisabledModels: Schema.array(Schema.string()).default([]).volatile(),
 })
 
-export function apply(ctx: Context): void {
+/**
+ * Cordis 以 `apply(ctx, config)` 调用插件（`runtime.callback(this.ctx, this.config)`）。
+ * 配置必须由**第二个参数**取用：`ctx.config` 不是已注入的服务，直接读会让
+ * Context 代理抛 `cannot get property "config" without inject`，整个插件无法激活。
+ */
+export function apply(ctx: Context, config?: unknown): void {
   suppressAutoSettingsPage(ctx)
 
   const warn = (message: string): void => { ctx.logger?.warn?.(message) }
-  const state = new PluginState(ctx, (ctx as unknown as { config?: unknown }).config)
+  const state = new PluginState(ctx, config)
   const initial = state.snapshot()
 
   // 目录缓存与状态文档落在同一个 DSH home 下，避免两个目录各自漂移。
@@ -71,6 +78,7 @@ export function apply(ctx: Context): void {
     warn,
     readImage: makeReadImage(ctx),
   })
+  modelscopeAdapter.setDisabledModels(initial.modelscopeDisabledModels)
 
   const llm = ctx.llm as unknown as AdapterRegisterTarget
   const customDeps: CustomProviderRegisterDeps = { warn }
@@ -81,7 +89,20 @@ export function apply(ctx: Context): void {
     disabledModels.splice(0, disabledModels.length, ...next.opencodeDisabledModels)
     includeDeprecated = next.opencodeIncludeDeprecated
     modelscopeAdapter.setApiKey(next.modelscopeApiKey)
+    modelscopeAdapter.setDisabledModels(next.modelscopeDisabledModels)
     registerCustomProviders(llm, next.customProviders, customDeps)
+  }
+
+  /** 每次探活重新取依赖：Key、模型启停与自定义供应商配置都可能是刚改过的。 */
+  const probeDeps = (): ProbeDeps => {
+    const snapshot = state.snapshot()
+    return {
+      modelscopeApiKey: snapshot.modelscopeApiKey,
+      modelscopeModelIds: () => modelscopeAdapter.enabledModelIds(),
+      opencodeBridge: opencodeAdapter.bridgeHandle(),
+      opencodeModelIds: () => opencodeAdapter.listServeableModelIds(),
+      customProviders: snapshot.customProviders,
+    }
   }
 
   registerJetHubRpc(ctx, {
@@ -89,6 +110,8 @@ export function apply(ctx: Context): void {
     discovery,
     applyState,
     warn,
+    probes: probeDeps,
+    modelscopeCatalog: () => modelscopeAdapter.catalogRows(),
     onCatalog: (rows: readonly OpencodeModelRecord[]): void => {
       opencodeAdapter.setCatalog(rows)
     },

@@ -64,7 +64,7 @@ import {
   type OpencodeServeModel,
 } from './opencode-discovery.js'
 import { OPENCODE, OPENCODE_FALLBACK_MODELS } from './opencode-product.js'
-import { registerAdapterIdempotent, type AdapterRegisterTarget } from './llm-register-compat.js'
+import { registerAdapterIdempotent, registerTargetOf, type AdapterRegisterTarget } from './llm-register-compat.js'
 
 /** 思考档位（仅 `reasoning === true` 的模型声明，供选择器与请求校验）。 */
 const REASONING_EFFORTS: readonly { id: string; name: string }[] = [
@@ -151,6 +151,16 @@ export class OpencodeAdapter extends LlmAdapter {
   setCatalog(records: readonly OpencodeModelRecord[]): void {
     this.lastCatalog = records
     this.options.catalog = records
+  }
+
+  /** 暴露懒启动的桥实例，供设置页探活复用（不触发 `ensure()`）。 */
+  bridgeHandle(): OpencodeBridge {
+    return this.bridge()
+  }
+
+  /** 供应商级探活取第一个当前承接的模型 id。 */
+  async listServeableModelIds(): Promise<readonly string[]> {
+    return (await this.serveModels()).map((model) => model.id)
   }
 
   /** 取当前承接的模型集（目录 + 手动条目 − 停用条目 − 不在供/弃用）。 */
@@ -330,25 +340,12 @@ export class OpencodeAdapter extends LlmAdapter {
 /** 注册目标的最小形状（llm 服务本身）。 */
 type LlmRegistrationTarget = Pick<AdapterRegisterTarget, 'registerAdapter'>
 
-/**
- * 把传入值归一到 llm 注册目标。
- *
- * 既接受直接传入的 llm 服务（`ctx.llm`，带 `registerAdapter`），也接受整个
- * Cordis `Context`（读 `ctx.llm`）—— 仓库里两种调用形态都存在。
- */
-function resolveRegisterTarget(llm: LlmRegistrationTarget | Context): AdapterRegisterTarget {
-  if (typeof (llm as LlmRegistrationTarget).registerAdapter === 'function') {
-    return llm as AdapterRegisterTarget
-  }
-  return (llm as Context).llm as unknown as AdapterRegisterTarget
-}
-
 /** 在 `ctx.llm`（或 llm 服务）上幂等注册 `['opencode']` 路由。 */
 export function registerOpencodeLlm(
   llm: LlmRegistrationTarget | Context,
   options: OpencodeAdapterOptions,
 ): OpencodeAdapter {
   const adapter = new OpencodeAdapter(options)
-  registerAdapterIdempotent(resolveRegisterTarget(llm), ['opencode'], adapter)
+  registerAdapterIdempotent(registerTargetOf(llm as AdapterRegisterTarget | Context), ['opencode'], adapter)
   return adapter
 }

@@ -50,6 +50,7 @@ import {
 } from './openai-compat.js'
 import {
   registerAdapterIdempotent,
+  registerTargetOf,
   type AdapterRegisterTarget,
 } from './llm-register-compat.js'
 
@@ -231,6 +232,8 @@ export class ModelscopeAdapter extends LlmAdapter {
   private readonly product: ModelscopeProduct
   private readonly options: ModelscopeAdapterOptions
   private apiKey: string
+  /** 停用的模型 id；只影响 `listModels()` 下发的显示列表，不拒绝显式调用。 */
+  private disabledModels: readonly string[] = []
   /** 最近一次目录结果，供必须同步的 `listAllModels()` 读取。 */
   private lastCatalog?: readonly ModelscopeCatalogEntry[]
 
@@ -245,6 +248,11 @@ export class ModelscopeAdapter extends LlmAdapter {
   setApiKey(key: string): void {
     this.apiKey = key.trim()
     this.lastCatalog = undefined
+  }
+
+  /** 运行期替换逐模型启停集合（状态文档变更后由接线层调用）。 */
+  setDisabledModels(ids: readonly string[]): void {
+    this.disabledModels = [...ids]
   }
 
   providerInfo(provider: string): LlmProviderInfo {
@@ -269,7 +277,28 @@ export class ModelscopeAdapter extends LlmAdapter {
 
   async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const all = await this.catalog()
-    return all.map((m) => this.toLlmModelInfo(m, provider))
+    return all
+      .filter((m) => !this.disabledModels.includes(m.id))
+      .map((m) => this.toLlmModelInfo(m, provider))
+  }
+
+  /**
+   * 设置页用的全量目录行。**必须返回全量**（含已停用条目），否则「某个 id
+   * 是否还在目录里」的判据会把停用误判成不存在；启停只体现在 disabled 标记上。
+   */
+  async catalogRows(): Promise<readonly { id: string; name: string; disabled: boolean }[]> {
+    const all = await this.catalog()
+    return all.map((m) => ({
+      id: m.id,
+      name: m.name,
+      disabled: this.disabledModels.includes(m.id),
+    }))
+  }
+
+  /** 供应商级探活取第一个未停用模型；没有可用模型时返回空数组。 */
+  async enabledModelIds(): Promise<readonly string[]> {
+    const rows = await this.catalogRows()
+    return rows.filter((row) => !row.disabled).map((row) => row.id)
   }
 
   async resolveModel(
@@ -495,19 +524,12 @@ export class ModelscopeAdapter extends LlmAdapter {
   }
 }
 
-/** 从 ctx 或 llm 服务解析出注册目标。 */
-function resolveRegisterTarget(llm: AdapterRegisterTarget | Context): AdapterRegisterTarget {
-  const candidate = llm as AdapterRegisterTarget
-  if (typeof candidate.registerAdapter === 'function') return candidate
-  return (llm as Context).llm as unknown as AdapterRegisterTarget
-}
-
 /** 在 `ctx.llm` 上幂等注册 modelscope 单条路由。 */
 export function registerModelscopeLlm(
   llm: AdapterRegisterTarget | Context,
   options: ModelscopeAdapterOptions,
 ): ModelscopeAdapter {
   const adapter = new ModelscopeAdapter(options)
-  registerAdapterIdempotent(resolveRegisterTarget(llm), ['modelscope'], adapter, options.warn)
+  registerAdapterIdempotent(registerTargetOf(llm), ['modelscope'], adapter, options.warn)
   return adapter
 }

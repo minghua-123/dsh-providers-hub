@@ -24,6 +24,7 @@ import {
   testCustomProvider,
 } from './custom-provider-store.js'
 import { readAccountStatus } from './opencode-account.js'
+import { probeModel, probeProvider, type ProbeDeps } from './probe.js'
 import {
   applyGatewayDesiredState,
   gatewayAddress,
@@ -46,6 +47,10 @@ export interface JetHubRpcDeps {
   /** 目录发现选项（缓存路径由接线层注入）。 */
   discovery: DiscoverOpencodeModelsOptions
   warn: (message: string) => void
+  /** 每次探活都重新取一份依赖，确保读到的是最新 Key / 最新自定义供应商配置。 */
+  probes: () => ProbeDeps
+  /** 魔搭全量目录行（含 disabled 标记）；启停只影响 listModels 的显示列表。 */
+  modelscopeCatalog: () => Promise<readonly { id: string; name: string; disabled: boolean }[]>
 }
 
 interface RpcCall {
@@ -123,6 +128,7 @@ export function registerJetHubRpc(ctx: Context, deps: JetHubRpcDeps): void {
             opencodeDisabledModels: state.snapshot().opencodeDisabledModels,
             opencodeIncludeDeprecated: state.snapshot().opencodeIncludeDeprecated,
             modelscopeKeyMasked: maskApiKey(state.snapshot().modelscopeApiKey),
+            modelscopeDisabledModels: state.snapshot().modelscopeDisabledModels,
           })
 
         case 'opencode.catalog': {
@@ -211,6 +217,33 @@ export function registerJetHubRpc(ctx: Context, deps: JetHubRpcDeps): void {
           const next = state.update({ modelscopeApiKey: asString(payload.apiKey) }, deps.warn)
           deps.applyState(next)
           return ok({ configured: next.modelscopeApiKey.length > 0 })
+        }
+
+        case 'modelscope.catalog':
+          return ok({ rows: await deps.modelscopeCatalog() })
+
+        case 'modelscope.setDisabled': {
+          const ids = Array.isArray(payload.disabledModels)
+            ? payload.disabledModels.filter((item): item is string => typeof item === 'string')
+            : []
+          const next = state.update({ modelscopeDisabledModels: ids }, deps.warn)
+          deps.applyState(next)
+          return ok({ disabledModels: next.modelscopeDisabledModels })
+        }
+
+        case 'probe.provider': {
+          const provider = asString(payload.provider)
+          if (provider.length === 0) return fail('jet-hub/invalid-config', '缺少供应商 id')
+          return ok(await probeProvider(provider, deps.probes()))
+        }
+
+        case 'probe.model': {
+          const provider = asString(payload.provider)
+          const model = asString(payload.model)
+          if (provider.length === 0 || model.length === 0) {
+            return fail('jet-hub/invalid-config', '缺少供应商 id 或模型 id')
+          }
+          return ok(await probeModel(provider, model, deps.probes()))
         }
 
         case 'gateway.status': {

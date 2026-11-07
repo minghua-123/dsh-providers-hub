@@ -66,6 +66,32 @@ function Button({ children, onClick, disabled }) {
   }, children);
 }
 
+/** 两级连通性测试：传入 model 时按单模型测试，否则按供应商整体测试；忙碌状态由组件自身维护。 */
+function ProbeButton({ provider, model, label, rpcCall, notify, disabled }) {
+  const [busy, setBusy] = React.useState(false);
+  const isDisabled = busy || disabled === true;
+
+  const run = async () => {
+    if (isDisabled) return;
+    setBusy(true);
+    try {
+      const result = model
+        ? await rpcCall('probe.model', { provider, model })
+        : await rpcCall('probe.provider', { provider });
+      notify({ ok: result?.ok === true, text: `${label}：${result?.message ?? '无返回'}（${result?.elapsedMs ?? 0} ms）` });
+    } catch (error) {
+      notify({ ok: false, text: `${label}失败：${error?.message ?? String(error)}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return React.createElement(Button, {
+    onClick: () => void run(),
+    disabled: isDisabled,
+  }, busy ? '测试中…' : label);
+}
+
 /** OpenCode 免费模型：只列免费档，逐模型启停，可强制刷新目录。 */
 function OpencodeSection({ rpcCall, notify }) {
   const [rows, setRows] = React.useState([]);
@@ -125,10 +151,11 @@ function OpencodeSection({ rpcCall, notify }) {
 
   return React.createElement(Section, {
     title: 'OpenCode 免费模型',
-    hint: '出网只经本机 OpenCode 官方客户端桥；插件不配 Key、不构造推理请求。列表默认只含免费档，下架与弃用模型需显式开关才显示。',
+    hint: '出网只经本机 OpenCode 官方客户端桥；插件不配 Key、不构造推理请求。列表默认只含免费档，下架与弃用模型需显式开关才显示。连通性测试会向本机 OpenCode 客户端发送一次最小请求，可能消耗免费档额度。',
   },
     React.createElement('div', { style: rowStyle },
       React.createElement(Button, { onClick: () => void load(true), disabled: busy }, busy ? '同步中…' : '立即同步'),
+      React.createElement(ProbeButton, { provider: 'opencode', label: '测试供应商', rpcCall, notify }),
       React.createElement('label', { style: { ...rowStyle, fontSize: 12 } },
         React.createElement('input', {
           type: 'checkbox',
@@ -158,14 +185,17 @@ function OpencodeSection({ rpcCall, notify }) {
             React.createElement('span', { style: { minWidth: 190 } }, row.name || row.id),
             React.createElement('code', { style: { fontSize: 11, opacity: 0.7 } }, row.id),
             row.reason ? React.createElement('span', { style: { fontSize: 11, opacity: 0.7 } }, row.reason) : null,
+            React.createElement(ProbeButton, { provider: 'opencode', model: row.id, label: '单模型测试', rpcCall, notify }),
           ))),
   );
 }
 
-/** 魔搭社区：静态 API Key，保存后即时生效。 */
+/** 魔搭社区：静态 API Key 保存即时生效，支持逐模型启停与两级连通性测试。 */
 function ModelscopeSection({ rpcCall, notify }) {
   const [status, setStatus] = React.useState({ configured: false });
   const [draftKey, setDraftKey] = React.useState('');
+  const [rows, setRows] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     let alive = true;
@@ -175,20 +205,49 @@ function ModelscopeSection({ rpcCall, notify }) {
     return () => { alive = false; };
   }, [rpcCall]);
 
+  const loadCatalog = React.useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await rpcCall('modelscope.catalog', {});
+      setRows(Array.isArray(result?.rows) ? result.rows : []);
+    } catch (error) {
+      notify({ ok: false, text: `模型目录读取失败：${error?.message ?? String(error)}` });
+    } finally {
+      setBusy(false);
+    }
+  }, [rpcCall, notify]);
+
+  React.useEffect(() => { void loadCatalog(); }, [loadCatalog]);
+
   const save = async () => {
     try {
       const result = await rpcCall('modelscope.setApiKey', { apiKey: draftKey });
-      setStatus({ configured: result?.configured === true });
+      setStatus((prev) => ({ ...prev, configured: result?.configured === true }));
       setDraftKey('');
       notify({ ok: true, text: '魔搭 API Key 已保存' });
+      // 远端目录按 Key 下发，换 Key 后必须重取，否则列表停留在上一次的账号视角。
+      void loadCatalog();
     } catch (error) {
       notify({ ok: false, text: `保存失败：${error?.message ?? String(error)}` });
     }
   };
 
+  const toggle = async (id, currentlyDisabled) => {
+    const next = currentlyDisabled
+      ? rows.filter((row) => row.disabled && row.id !== id).map((row) => row.id)
+      : [...rows.filter((row) => row.disabled).map((row) => row.id), id];
+    try {
+      const result = await rpcCall('modelscope.setDisabled', { disabledModels: next });
+      const disabled = new Set(result?.disabledModels ?? next);
+      setRows((prev) => prev.map((row) => ({ ...row, disabled: disabled.has(row.id) })));
+    } catch (error) {
+      notify({ ok: false, text: `模型启停失败：${error?.message ?? String(error)}` });
+    }
+  };
+
   return React.createElement(Section, {
     title: '魔搭社区（官方接入）',
-    hint: '标准 OpenAI 兼容接口，需用户在魔搭控制台生成 API Key。密钥只存于插件自有状态文档，设置页仅显示打码值。',
+    hint: '标准 OpenAI 兼容接口，需用户在魔搭控制台生成 API Key。密钥只存于插件自有状态文档，设置页仅显示打码值；可逐模型启停并做连通性测试。',
   },
     React.createElement('p', { style: { fontSize: 13 } },
       status.configured ? '状态：已配置' : '状态：未配置（模型仍会显示，但请求会返回认证失败）',
@@ -203,7 +262,25 @@ function ModelscopeSection({ rpcCall, notify }) {
         onChange: (event) => setDraftKey(event.target.value),
       }),
       React.createElement(Button, { onClick: () => void save() }, '保存'),
+      React.createElement(ProbeButton, { provider: 'modelscope', label: '测试供应商', rpcCall, notify }),
+      React.createElement(Button, { onClick: () => void loadCatalog(), disabled: busy }, busy ? '刷新中…' : '刷新目录'),
     ),
+    rows.length === 0
+      ? React.createElement('p', { style: { fontSize: 13, opacity: 0.7 } }, busy ? '正在读取目录…' : '暂无模型（未配置 API Key 或目录不可用）。')
+      : React.createElement('div', { style: { display: 'grid', gap: 6 } },
+          rows.map((row) => React.createElement('label', {
+            key: row.id,
+            style: { ...rowStyle, fontSize: 13 },
+          },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: !row.disabled,
+              onChange: () => void toggle(row.id, row.disabled === true),
+            }),
+            React.createElement('span', { style: { minWidth: 190 } }, row.name || row.id),
+            React.createElement('code', { style: { fontSize: 11, opacity: 0.7 } }, row.id),
+            React.createElement(ProbeButton, { provider: 'modelscope', model: row.id, label: '单模型测试', rpcCall, notify }),
+          ))),
   );
 }
 
@@ -211,6 +288,30 @@ const EMPTY_DRAFT = {
   id: '', displayName: '', api: 'openai-completions', baseURL: '',
   apiKey: '', models: '', enabled: true,
 };
+
+/** 已保存供应商的单模型测试行：选中态在本行内维护，避免集中到父组件。 */
+function CustomProbeRow({ item, rpcCall, notify }) {
+  const [selected, setSelected] = React.useState('');
+  const models = Array.isArray(item.models) ? item.models : [];
+  return React.createElement(React.Fragment, null,
+    React.createElement('select', {
+      value: selected,
+      style: { padding: '6px 8px', maxWidth: 200 },
+      onChange: (event) => setSelected(event.target.value),
+    },
+      React.createElement('option', { value: '' }, '选择模型'),
+      models.map((model) => React.createElement('option', { key: model.id, value: model.id }, model.name || model.id)),
+    ),
+    React.createElement(ProbeButton, {
+      provider: item.id,
+      model: selected,
+      label: '测此模型',
+      disabled: !selected,
+      rpcCall,
+      notify,
+    }),
+  );
+}
 
 /** 自定义供应商：多实例增删改、连通性测试、自动拉取模型目录。 */
 function CustomSection({ rpcCall, notify }) {
@@ -309,6 +410,8 @@ function CustomSection({ rpcCall, notify }) {
               });
             } }, '编辑'),
             React.createElement(Button, { onClick: () => void remove(item.id) }, '删除'),
+            React.createElement(ProbeButton, { provider: item.id, label: '测试供应商', rpcCall, notify }),
+            React.createElement(CustomProbeRow, { item, rpcCall, notify }),
           ))),
     React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
       field('id', '路由 id（小写字母/数字，如 myapi）', { placeholder: 'myapi', disabled: editing }),

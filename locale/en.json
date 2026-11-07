@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Jet Hub",
-    "description": "Sign in and manage accounts across multiple providers, with multi-account pools, silent credential refresh, per-model list toggles, credit balances and daily check-in."
+    "title": "Jet Hub (Lite)",
+    "description": "OpenCode free-tier bridge, ModelScope official access and user-defined providers with OpenAI-compatible, Responses and Anthropic wire protocols."
   }
 }

@@ -258,18 +258,20 @@ export interface CustomProviderTestResult {
 /**
  * 真实发一次**最小** chat 请求验证连通性。
  *
- * - 取配置里的第一个模型（无模型时用占位 id），单条 `ping` 用户消息，
- *   `maxTokens: 16`、`stream: false`，尽量少耗额度；
+ * - 未指定 modelId 时取配置里的第一个模型（无模型时用占位 id），
+ *   单条 `ping` 用户消息、`maxTokens: 16`、`stream: false`，尽量少耗额度；
+ *   `modelId` 由「单模型测试」传入，供应商级测试留空；
  * - `fetcher` 可注入便于单测；
  * - 不落盘、不写日志；服务端原文与异常信息都先经 `scrubSecret` 擦除 key。
  */
 export async function testCustomProvider(
   config: CustomProviderConfig,
   deps: CustomProviderDeps = {},
+  modelId?: string,
 ): Promise<CustomProviderTestResult> {
   const scrub = (text: string): string => scrubSecret(text, config.apiKey)
   try {
-    const model = config.models[0]?.id ?? 'custom-model'
+    const model = modelId?.trim() || config.models[0]?.id || 'custom-model'
     const request = await buildCustomRequest(
       config,
       {

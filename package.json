@@ -1,6 +1,6 @@
 {
   "name": "dsh-providers-hub-lite",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DeepSeek Harness plugin: OpenCode free-tier bridge, ModelScope official access, and user-defined providers with OpenAI-compatible / Responses / Anthropic wire protocols",
   "type": "module",
   "main": "lib/index.js",
