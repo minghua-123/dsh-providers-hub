@@ -6,31 +6,42 @@ import {
   descriptorOf,
 } from '../../src/provider-registry.js'
 
-describe('精简版渠道清单', () => {
-  it('只保留三类入口，且 id 唯一', () => {
-    const ids = PROVIDER_REGISTRY.map((entry) => entry.id)
-    expect(ids).toEqual(['opencode', 'modelscope', 'custom'])
-    expect(new Set(ids).size).toBe(ids.length)
+describe('0.3.2 渠道清单', () => {
+  it('清单只保留一条 opencode 渠道，且为真实渠道', () => {
+    expect(PROVIDER_REGISTRY).toHaveLength(1)
+    expect(PROVIDER_REGISTRY[0].id).toBe('opencode')
+    expect(PROVIDER_REGISTRY[0].channel).toBe(true)
+    expect(new Set(PROVIDER_REGISTRY.map((entry) => entry.id)).size).toBe(1)
   })
 
-  it('只有 opencode 与 modelscope 是真实渠道，custom 是虚拟分组', () => {
-    expect(channelIds()).toEqual(['opencode', 'modelscope'])
-    expect(descriptorOf('custom')?.channel).toBe(false)
-    expect(descriptorOf('opencode')?.channel).toBe(true)
-    expect(descriptorOf('not-exist')).toBeUndefined()
+  it('channelIds() 只返回 opencode', () => {
+    expect(channelIds()).toEqual(['opencode'])
   })
 
-  it('积分能力从清单派生，不出现第二份字面量', () => {
+  it('已移除的渠道 id 查不到描述符', () => {
+    expect(descriptorOf('modelscope')).toBeUndefined()
+    expect(descriptorOf('custom')).toBeUndefined()
+    expect(descriptorOf('')).toBeUndefined()
+  })
+
+  it('积分能力表只有 opencode 且从清单派生', () => {
     const table = creditCapabilitiesOf()
-    expect(Object.keys(table).sort()).toEqual(['custom', 'modelscope', 'opencode'])
-    expect(table.modelscope.balance).toBe(true)
-    expect(table.opencode.balance).toBe(false)
+    expect(Object.keys(table)).toEqual(['opencode'])
+    expect(table.opencode).toEqual({ balance: false, dailyCheckin: false })
   })
 
-  it('旧渠道 id 不再出现在清单里', () => {
-    const ids = PROVIDER_REGISTRY.map((entry) => entry.id)
-    for (const legacy of ['codearts', 'buddy', 'qoder', 'cline', 'zcode', 'aggregate', 'minimax']) {
-      expect(ids).not.toContain(legacy)
-    }
+  it('清单、描述符与积分能力表均不可变', () => {
+    expect(Object.isFrozen(PROVIDER_REGISTRY)).toBe(true)
+    const descriptor = PROVIDER_REGISTRY[0]
+    expect(Object.isFrozen(descriptor)).toBe(true)
+    expect(Object.isFrozen(descriptor.credits)).toBe(true)
+    expect(Object.isFrozen(creditCapabilitiesOf())).toBe(true)
+  })
+
+  it('channelIds() 返回派生副本，改写不影响清单', () => {
+    const ids = channelIds()
+    ids.push('ghost')
+    expect(channelIds()).toEqual(['opencode'])
+    expect(PROVIDER_REGISTRY).toHaveLength(1)
   })
 })

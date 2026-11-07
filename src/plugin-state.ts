@@ -1,39 +1,30 @@
 /**
- * 插件运行期状态。
+ * 插件运行期状态：只保留 OpenCode 免费档的逐模型启停与弃用显示开关。
  *
- * 配置形状由 `Config`（schemastery）声明，运行期读写统一走本模块：
- * 启动时优先读上一次落盘的文档，冷启动才用宿主下发的 Config 初值；
- * 每次变更原子写盘并通知监听者（重新注册自定义供应商路由、更新魔搭凭据）。
+ * 配置形状由 `Config`（schemastery）声明；运行期以自有状态文档为准，
+ * 冷启动才用宿主下发的 Config 初值。每次变更原子写盘并通知监听者。
  *
- * ⚠️ 明文 API Key 只落在本插件自有状态文档与宿主进程内存里，不写日志、
- * 不进会话历史；设置页读到的是 `maskCustomProvider()` 的打码结果。
+ * ⚠️ 状态文档沿用 `lite-state.json` 这个文件名：旧版本留下的多余字段会被
+ * `coerce()` 忽略，升级不需要迁移或删文件。
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { resolveJetHubHome } from './jet-hub-store.js'
-import { normalizeCustomProviders, upsertCustomProvider, removeCustomProvider } from './custom-provider-store.js'
-import type { CustomProviderConfig } from './custom-provider-types.js'
 
 /** 状态文档形状。 */
 export interface LiteState {
-  customProviders: CustomProviderConfig[]
   opencodeDisabledModels: string[]
   opencodeIncludeDeprecated: boolean
-  modelscopeApiKey: string
-  modelscopeDisabledModels: string[]
 }
 
 const STATE_FILE = 'lite-state.json'
 
 function emptyState(): LiteState {
   return {
-    customProviders: [],
     opencodeDisabledModels: [],
     opencodeIncludeDeprecated: false,
-    modelscopeApiKey: '',
-    modelscopeDisabledModels: [],
   }
 }
 
@@ -47,20 +38,9 @@ function coerce(raw: unknown): LiteState {
   const base = emptyState()
   if (typeof raw !== 'object' || raw === null) return base
   const value = raw as Record<string, unknown>
-  const section = value.customProviders
-  // Config 里的形状是 { customProviders: { providers: [...] } }；
-  // 磁盘文档直接存 providers 数组。两种都接受，避免两套判据。
-  const providersRaw = Array.isArray(section)
-    ? section
-    : (section && typeof section === 'object' && 'providers' in section
-      ? (section as Record<string, unknown>).providers
-      : value.providers)
   return {
-    customProviders: normalizeCustomProviders(providersRaw),
     opencodeDisabledModels: stringList(value.opencodeDisabledModels),
     opencodeIncludeDeprecated: value.opencodeIncludeDeprecated === true,
-    modelscopeApiKey: typeof value.modelscopeApiKey === 'string' ? value.modelscopeApiKey : '',
-    modelscopeDisabledModels: stringList(value.modelscopeDisabledModels),
   }
 }
 
@@ -79,15 +59,12 @@ export class PluginState {
   /** 当前快照（浅拷贝，调用方不能就地改内部状态）。 */
   snapshot(): LiteState {
     return {
-      customProviders: [...this.data.customProviders],
       opencodeDisabledModels: [...this.data.opencodeDisabledModels],
       opencodeIncludeDeprecated: this.data.opencodeIncludeDeprecated,
-      modelscopeApiKey: this.data.modelscopeApiKey,
-      modelscopeDisabledModels: [...this.data.modelscopeDisabledModels],
     }
   }
 
-  /** 状态文档路径（供目录发现缓存等复用同一目录）。 */
+  /** 状态文档所在目录（供目录发现缓存复用同一目录）。 */
   homeDir(): string | undefined {
     return this.filePath === undefined ? undefined : dirname(this.filePath)
   }
@@ -105,14 +82,6 @@ export class PluginState {
       }
     }
     return snapshot
-  }
-
-  upsertProvider(config: CustomProviderConfig, log?: (message: string) => void): LiteState {
-    return this.update({ customProviders: upsertCustomProvider(this.data.customProviders, config) }, log)
-  }
-
-  removeProvider(id: string, log?: (message: string) => void): LiteState {
-    return this.update({ customProviders: removeCustomProvider(this.data.customProviders, id) }, log)
   }
 
   subscribe(listener: (state: LiteState) => void): () => void {

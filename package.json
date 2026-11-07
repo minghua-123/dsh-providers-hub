@@ -1,7 +1,7 @@
 {
   "name": "dsh-providers-hub-lite",
-  "version": "0.3.1",
-  "description": "DeepSeek Harness plugin: OpenCode free-tier bridge, ModelScope official access, and user-defined providers with OpenAI-compatible / Responses / Anthropic wire protocols",
+  "version": "0.3.2",
+  "description": "DeepSeek Harness plugin: a single OpenCode free-tier bridge backed by the local official client",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -24,8 +24,8 @@
     "build": "tsc -p tsconfig.json",
     "build:client": "node plugin-src/client/build.mjs",
     "build:assets": "node scripts/copy-assets.mjs",
-    "build:all": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node plugin-src/client/build.mjs && node scripts/sync-bootstrap-lib.mjs",
-    "prepare": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node plugin-src/client/build.mjs && node scripts/sync-bootstrap-lib.mjs",
+    "build:all": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node plugin-src/client/build.mjs",
+    "prepare": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node plugin-src/client/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "pretest": "npm run typecheck:tests",

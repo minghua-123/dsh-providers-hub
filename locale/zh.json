@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Jet Hub（精简版）",
-    "description": "OpenCode 免费档桥、魔搭官方接入与自定义供应商，支持 OpenAI 兼容 / Responses / Anthropic 三种接口。"
+    "title": "Jet Hub（OpenCode 单渠道版）",
+    "description": "只承接 OpenCode 免费档：经本机官方客户端桥出网，支持双源模型目录、逐模型启停与连通性测试。"
   }
 }

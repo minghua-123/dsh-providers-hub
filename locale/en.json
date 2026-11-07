@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Jet Hub (Lite)",
-    "description": "OpenCode free-tier bridge, ModelScope official access and user-defined providers with OpenAI-compatible, Responses and Anthropic wire protocols."
+    "title": "Jet Hub (OpenCode Only)",
+    "description": "OpenCode free-tier only: routed through the local official client, with dual-source model discovery, per-model toggles and connectivity probes."
   }
 }

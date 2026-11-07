@@ -1,66 +1,123 @@
-import { mkdtempSync } from 'node:fs'
+/**
+ * Jet Hub 管理端点的行为级守卫。
+ *
+ * 每个用例独占一个临时状态目录，并在结束后恢复 DSH_JET_HUB_STATE_DIR，
+ * 避免用例之间经由状态文档互相污染。端点用同步 inject 替身注册，不依赖宿主。
+ */
+
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { registerJetHubRpc } from '../../src/jet-hub-rpc.js'
-import { PluginState } from '../../src/plugin-state.js'
-import { maskApiKey } from '../../src/custom-provider-store.js'
-import type { CustomProviderConfig } from '../../src/custom-provider-types.js'
-import type { LiteState } from '../../src/plugin-state.js'
-import type { CustomFetcher } from '../../src/custom-provider-protocols.js'
+import { afterEach, describe, expect, it } from 'vitest'
+import { JET_HUB_API_PATH, registerJetHubRpc } from '../../src/jet-hub-rpc.js'
+import { PluginState, type LiteState } from '../../src/plugin-state.js'
+import type { OpencodeBridgeLike, ProbeDeps } from '../../src/probe.js'
 
 interface RegisteredRoute {
   path: string
   fetch: (request: Request) => Promise<Response>
 }
 
-function harness(options: { catalogRows?: Array<{ id: string; name: string; disabled: boolean }> } = {}) {
+interface RpcEnvelope {
+  type: string
+  rpcId: string
+  result: {
+    ok: boolean
+    value?: unknown
+    error?: { code: string; message: string }
+  }
+}
+
+interface Harness {
+  route: RegisteredRoute
+  state: PluginState
+  applied: LiteState[]
+  bridgeCalls: string[]
+  warnings: string[]
+  probesCalls: () => number
+  dir: string
+}
+
+const originalStateDir = process.env.DSH_JET_HUB_STATE_DIR
+const tempDirs: string[] = []
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.DSH_JET_HUB_STATE_DIR
+  else process.env.DSH_JET_HUB_STATE_DIR = originalStateDir
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function useStateDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-rpc-spec-'))
+  tempDirs.push(dir)
+  process.env.DSH_JET_HUB_STATE_DIR = dir
+  return dir
+}
+
+function harness(options: { preseed?: Record<string, unknown> } = {}): Harness {
+  const dir = useStateDir()
+  if (options.preseed !== undefined) {
+    mkdirSync(join(dir, 'jet-hub'), { recursive: true })
+    writeFileSync(join(dir, 'jet-hub', 'lite-state.json'), JSON.stringify(options.preseed), 'utf8')
+  }
+
   const routes: RegisteredRoute[] = []
-  const probeCalls: Array<{ url: string; model?: unknown }> = []
   const connection = {
     fetch: { register: (route: RegisteredRoute): void => { routes.push(route) } },
   }
+  const warnings: string[] = []
   const ctx = {
     inject: (_deps: string[], fn: (injected: unknown) => void): void => { fn({ connection }) },
-    logger: { warn: (): void => {} },
+    logger: { warn: (message: string): void => { warnings.push(message) } },
     get: (): undefined => undefined,
-    config: {},
   }
-  // 每个用例独占一个状态目录：PluginState 会把路径固定在构造时，
-  // 之后即使复用同一个临时根也不会互相读到对方写下的配置。
-  const previous = process.env.DSH_JET_HUB_STATE_DIR
-  process.env.DSH_JET_HUB_STATE_DIR = mkdtempSync(join(tmpdir(), 'dsh-rpc-spec-'))
+
   const state = new PluginState(ctx as never, {})
-  if (previous === undefined) delete process.env.DSH_JET_HUB_STATE_DIR
-  else process.env.DSH_JET_HUB_STATE_DIR = previous
   const applied: LiteState[] = []
+  const bridgeCalls: string[] = []
+  let probesCalls = 0
+  const bridge: OpencodeBridgeLike = {
+    async ensure() { return 'http://127.0.0.1:1' },
+    async turn(input) {
+      bridgeCalls.push(input.model)
+      return { text: 'pong', usage: null, raw: {} }
+    },
+  }
+
   registerJetHubRpc(ctx as never, {
     state,
     discovery: {},
     applyState: (next): void => { applied.push(next) },
     onCatalog: (): void => {},
-    warn: (): void => {},
-    probes: () => ({
-      modelscopeApiKey: 'ms-test-key',
-      customProviders: [],
-      fetcher: (async (url: string, init: { body?: unknown }) => {
-        let model: unknown
-        if (typeof init?.body === 'string') {
-          try { model = (JSON.parse(init.body) as { model?: unknown }).model } catch { model = undefined }
-        }
-        probeCalls.push({ url, model })
-        return new Response(JSON.stringify({ choices: [] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      }) as CustomFetcher,
-    }),
-    modelscopeCatalog: async () => options.catalogRows ?? [],
+    warn: (message: string): void => { warnings.push(message) },
+    probes: (): ProbeDeps => {
+      probesCalls += 1
+      return {
+        opencodeBridge: bridge,
+        opencodeModelIds: async () => ['free-first'],
+      }
+    },
   })
-  return { route: routes[0], state, applied, probeCalls }
+
+  return {
+    route: routes[0],
+    state,
+    applied,
+    bridgeCalls,
+    warnings,
+    probesCalls: () => probesCalls,
+    dir,
+  }
 }
 
-async function invoke(route: RegisteredRoute, method: string, payload: Record<string, unknown> = {}, envelope?: Record<string, unknown>) {
+async function invoke(
+  route: RegisteredRoute,
+  method: string,
+  payload: Record<string, unknown> = {},
+  envelope: Record<string, unknown> = {},
+): Promise<RpcEnvelope> {
   const body = {
     type: 'client-request',
     rpcId: 'r1',
@@ -74,25 +131,16 @@ async function invoke(route: RegisteredRoute, method: string, payload: Record<st
     body: JSON.stringify(body),
   })
   const response = await route.fetch(request)
-  return (await response.json()) as { type: string; rpcId: string; result: { ok: boolean; value?: unknown; error?: { code: string; message: string } } }
-}
-
-const config: CustomProviderConfig = {
-  id: 'myapi',
-  displayName: '我的供应商',
-  api: 'openai-completions',
-  baseURL: 'https://example.com/v1',
-  apiKey: 'sk-secret-123',
-  models: [{ id: 'model-a', name: 'Model A', contextWindow: 8192 }],
-  enabled: true,
+  return (await response.json()) as RpcEnvelope
 }
 
 describe('Jet Hub RPC 端点', () => {
   it('注册在 /api/jet-hub', () => {
+    expect(JET_HUB_API_PATH).toBe('/api/jet-hub')
     expect(harness().route.path).toBe('/api/jet-hub')
   })
 
-  it('未知方法返回 ok:false 并带错误码，不把失败包成成功', async () => {
+  it('未知方法返回 ok:false 并带 unknown-method 错误码', async () => {
     const { route } = harness()
     const response = await invoke(route, 'no.such.method')
     expect(response.result.ok).toBe(false)
@@ -107,83 +155,136 @@ describe('Jet Hub RPC 端点', () => {
     expect(response.result.error?.code).toBe('gateway/bad-request')
   })
 
-  it('state.get 返回掩码配置，绝不回显明文 Key', async () => {
-    const { route, state } = harness()
-    state.upsertProvider(config)
+  it('provider.status 只暴露 opencode 一条渠道', async () => {
+    const { route } = harness()
+    const response = await invoke(route, 'provider.status')
+    expect(response.result.ok).toBe(true)
+    const value = response.result.value as { providers: Array<{ id: string; channel: boolean }> }
+    expect(value.providers).toHaveLength(1)
+    expect(value.providers[0].id).toBe('opencode')
+    expect(value.providers[0].channel).toBe(true)
+  })
+
+  it('state.get 返回默认空状态', async () => {
+    const { route } = harness()
     const response = await invoke(route, 'state.get')
     expect(response.result.ok).toBe(true)
-    const value = response.result.value as { customProviders: Array<{ apiKeyMasked: string }> }
-    expect(value.customProviders).toHaveLength(1)
-    expect(JSON.stringify(value)).not.toContain('sk-secret-123')
-  })
-
-  it('编辑态回传掩码时保留原 Key 与模型列表，不把掩码写成真凭据', async () => {
-    const { route, state, applied } = harness()
-    const saved = await invoke(route, 'custom.upsert', { config })
-    expect(saved.result.ok).toBe(true)
-    expect(state.snapshot().customProviders[0].apiKey).toBe('sk-secret-123')
-
-    const edited = await invoke(route, 'custom.upsert', {
-      config: { ...config, displayName: '改名', apiKey: maskApiKey(config.apiKey), models: [] },
+    expect(response.result.value).toEqual({
+      opencodeDisabledModels: [],
+      opencodeIncludeDeprecated: false,
     })
-    expect(edited.result.ok).toBe(true)
-    const stored = state.snapshot().customProviders[0]
-    expect(stored.displayName).toBe('改名')
-    expect(stored.apiKey).toBe('sk-secret-123')
-    expect(stored.models).toHaveLength(1)
-    expect(applied.length).toBe(2)
-    expect(JSON.stringify(edited.result.value)).not.toContain('sk-secret-123')
   })
 
-  it('非法配置返回可读错误，不写状态', async () => {
-    const { route, state } = harness()
-    const response = await invoke(route, 'custom.upsert', { config: { ...config, id: 'opencode' } })
-    expect(response.result.ok).toBe(false)
-    expect(response.result.error?.message).toContain('配置非法')
-    expect(state.snapshot().customProviders).toHaveLength(0)
-  })
-
-  it('模型启停写入状态并触发接线层同步', async () => {
-    const { route, state, applied } = harness()
-    const response = await invoke(route, 'opencode.setDisabled', { disabledModels: ['free-a'] })
+  it('opencode.setDisabled 写状态并触发 applyState', async () => {
+    const { route, state, applied, dir } = harness()
+    const response = await invoke(route, 'opencode.setDisabled', {
+      disabledModels: ['free-a', 'free-b'],
+    })
     expect(response.result.ok).toBe(true)
-    expect(state.snapshot().opencodeDisabledModels).toEqual(['free-a'])
+    const value = response.result.value as { disabledModels: string[] }
+    expect(value.disabledModels).toEqual(['free-a', 'free-b'])
+    expect(state.snapshot().opencodeDisabledModels).toEqual(['free-a', 'free-b'])
     expect(applied).toHaveLength(1)
+    expect(applied[0].opencodeDisabledModels).toEqual(['free-a', 'free-b'])
+    const onDisk = JSON.parse(readFileSync(join(dir, 'jet-hub', 'lite-state.json'), 'utf8')) as {
+      opencodeDisabledModels: string[]
+    }
+    expect(onDisk.opencodeDisabledModels).toEqual(['free-a', 'free-b'])
   })
 
-  it('魔搭逐模型启停写入状态并触发接线层同步', async () => {
-    const { route, state, applied } = harness()
-    const response = await invoke(route, 'modelscope.setDisabled', { disabledModels: ['Qwen/Qwen3-8B'] })
+  it('opencode.setIncludeDeprecated 写状态并触发 applyState', async () => {
+    const { route, state, applied, dir } = harness()
+    const response = await invoke(route, 'opencode.setIncludeDeprecated', { enabled: true })
     expect(response.result.ok).toBe(true)
-    expect(state.snapshot().modelscopeDisabledModels).toEqual(['Qwen/Qwen3-8B'])
+    const value = response.result.value as { includeDeprecated: boolean }
+    expect(value.includeDeprecated).toBe(true)
+    expect(state.snapshot().opencodeIncludeDeprecated).toBe(true)
     expect(applied).toHaveLength(1)
+    expect(applied[0].opencodeIncludeDeprecated).toBe(true)
+    const onDisk = JSON.parse(readFileSync(join(dir, 'jet-hub', 'lite-state.json'), 'utf8')) as {
+      opencodeIncludeDeprecated: boolean
+    }
+    expect(onDisk.opencodeIncludeDeprecated).toBe(true)
   })
 
-  it('魔搭目录返回全量行，停用条目仍带 disabled 标记', async () => {
-    const { route } = harness({ catalogRows: [{ id: 'm1', name: 'M1', disabled: true }] })
-    const response = await invoke(route, 'modelscope.catalog')
+  it('预置状态文档可经 snapshot 与 state.get 读回，且旧字段被忽略', async () => {
+    const preseed = {
+      opencodeDisabledModels: ['free-x', 'free-y'],
+      opencodeIncludeDeprecated: true,
+      customProviders: [{ id: 'legacy' }],
+      modelscopeApiKey: 'legacy-key',
+    }
+    const { state, route } = harness({ preseed })
+    const snapshot = state.snapshot()
+    expect(snapshot.opencodeDisabledModels).toEqual(['free-x', 'free-y'])
+    expect(snapshot.opencodeIncludeDeprecated).toBe(true)
+    expect(Object.keys(snapshot).sort()).toEqual([
+      'opencodeDisabledModels',
+      'opencodeIncludeDeprecated',
+    ])
+
+    const response = await invoke(route, 'state.get')
     expect(response.result.ok).toBe(true)
-    const value = response.result.value as { rows: Array<{ id: string; disabled: boolean }> }
-    expect(value.rows).toHaveLength(1)
-    expect(value.rows[0].disabled).toBe(true)
+    expect(response.result.value).toEqual({
+      opencodeDisabledModels: ['free-x', 'free-y'],
+      opencodeIncludeDeprecated: true,
+    })
   })
 
-  it('probe.model 把指定模型写进真实请求，业务结果不包成 RPC 失败', async () => {
-    const { route, probeCalls } = harness()
-    const response = await invoke(route, 'probe.model', { provider: 'modelscope', model: 'm-special' })
+  it('probe.model 正常时 value.ok 为真，且 bridge 收到指定模型', async () => {
+    const { route, bridgeCalls } = harness()
+    const response = await invoke(route, 'probe.model', {
+      provider: 'opencode',
+      model: 'free-target',
+    })
     expect(response.result.ok).toBe(true)
     const value = response.result.value as { ok: boolean; model: string }
     expect(value.ok).toBe(true)
-    expect(value.model).toBe('m-special')
-    expect(probeCalls).toHaveLength(1)
-    expect(probeCalls[0].model).toBe('m-special')
+    expect(value.model).toBe('free-target')
+    expect(bridgeCalls).toEqual(['free-target'])
   })
 
-  it('probe 缺少参数返回可读错误且不发请求', async () => {
-    const { route, probeCalls } = harness()
+  it('probe.provider 正常时走供应商级并把结果包在 value 里', async () => {
+    const { route, bridgeCalls } = harness()
+    const response = await invoke(route, 'probe.provider', { provider: 'opencode' })
+    expect(response.result.ok).toBe(true)
+    const value = response.result.value as { ok: boolean; model: string; message: string }
+    expect(value.ok).toBe(true)
+    expect(value.model).toBe('free-first')
+    expect(value.message).toContain('供应商级（free-first）')
+    expect(bridgeCalls).toEqual(['free-first'])
+  })
+
+  it('probe.model 的业务失败包在 value 里，而非 RPC 失败', async () => {
+    const { route, bridgeCalls } = harness()
+    const response = await invoke(route, 'probe.model', {
+      provider: 'ghost',
+      model: 'm-x',
+    })
+    expect(response.result.ok).toBe(true)
+    expect(response.result.error).toBeUndefined()
+    const value = response.result.value as { ok: boolean; message: string }
+    expect(value.ok).toBe(false)
+    expect(value.message).toContain('仅支持 opencode')
+    expect(bridgeCalls).toHaveLength(0)
+  })
+
+  it('probe.model 缺参数返回 invalid-config 且不取探活依赖', async () => {
+    const { route, bridgeCalls, probesCalls } = harness()
+    const response = await invoke(route, 'probe.model', { provider: 'opencode' })
+    expect(response.result.ok).toBe(false)
+    expect(response.result.error?.code).toBe('jet-hub/invalid-config')
+    expect(probesCalls()).toBe(0)
+    expect(bridgeCalls).toHaveLength(0)
+  })
+
+  it('probe.provider 缺参数返回 invalid-config 且不发请求', async () => {
+    const { route, bridgeCalls, probesCalls } = harness()
     const response = await invoke(route, 'probe.provider', {})
     expect(response.result.ok).toBe(false)
+    expect(response.result.error?.code).toBe('jet-hub/invalid-config')
     expect(response.result.error?.message).toContain('供应商 id')
-    expect(probeCalls).toHaveLength(0)
+    expect(probesCalls()).toBe(0)
+    expect(bridgeCalls).toHaveLength(0)
   })
 })
