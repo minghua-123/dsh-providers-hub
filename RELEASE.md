@@ -1,7 +1,7 @@
-# 发布手册（dsh-providers-hub-plus）
+# 发布手册（dsh-providers-hub-lite）
 
 本仓库是 [iJetLi/dsh-providers-hub](https://github.com/iJetLi/dsh-providers-hub) 的个人再发布版：
-包名 `dsh-providers-hub-plus`，与上游包**并存但不兼容同时启用**（两者注册同一套 provider id）。
+包名 `dsh-providers-hub-lite`，与上游包**并存但不兼容同时启用**（两者注册同一套 provider id）。
 
 > 包名 = 插件身份。`package.json` 的 `name`、`plugin-src/client/jet-hub-styles.js` 的 `PLUGIN_ID`、
 > `cordis.patch.yml` 的加载行 `name:`、以及构建产物里注册的 id **四处必须逐字相同**。
@@ -50,7 +50,7 @@ npm version patch --no-git-tag-version    # 或 minor / major
 
 ```bash
 pnpm install
-node plugin-src/client/build.mjs          # 必须打印 registered id: dsh-providers-hub-plus
+node plugin-src/client/build.mjs          # 必须打印 registered id: dsh-providers-hub-lite
 npm pack --dry-run                        # 确认 files 里含 lib/、cordis.patch.yml、locale/
 ```
 
@@ -66,7 +66,7 @@ npx vitest run tests/unit/client-registration-id.spec.ts \
 冒烟安装（确认包里没有缺文件）：
 
 ```bash
-cd "$(mktemp -d)" && npm install <仓库路径>/dsh-providers-hub-plus-<版本>.tgz --ignore-scripts
+cd "$(mktemp -d)" && npm install <仓库路径>/dsh-providers-hub-lite-<版本>.tgz --ignore-scripts
 ```
 
 ## 4. 发布到 npm
@@ -83,20 +83,20 @@ npm publish --registry=https://registry.npmjs.org/
 - 验证：
 
 ```bash
-npm view dsh-providers-hub-plus version dist-tags
-npm view dsh-providers-hub-plus@<版本> dist.fileCount dist.unpackedSize
+npm view dsh-providers-hub-lite version dist-tags
+npm view dsh-providers-hub-lite@<版本> dist.fileCount dist.unpackedSize
 ```
 
 ## 5. 发 GitHub Release
 
 ```bash
-git tag -a v<版本> -m "dsh-providers-hub-plus <版本>"
+git tag -a v<版本> -m "dsh-providers-hub-lite <版本>"
 git push origin dist v<版本>
-gh release create v<版本> dsh-providers-hub-plus-<版本>.tgz \
-  --target dist --title "dsh-providers-hub-plus <版本>" --notes-file <说明文件>
+gh release create v<版本> dsh-providers-hub-lite-<版本>.tgz \
+  --target lite --title "dsh-providers-hub-lite <版本>" --notes-file <说明文件>
 ```
 
-Release 说明建议写三段：本次改了什么、升级方式（`npm i dsh-providers-hub-plus@<版本>` 或插件市场安装）、
+Release 说明建议写三段：本次改了什么、升级方式（`npm i dsh-providers-hub-lite@<版本>` 或插件市场安装）、
 以及「不要与原包 `dsh-providers-hub` 同时启用」。
 
 > 说明文本请**先写进文件**再用 `--notes-file` 引用。在 PowerShell 里用双引号 here-string 拼说明会踩转义坑：
@@ -109,11 +109,11 @@ Release 说明建议写三段：本次改了什么、升级方式（`npm i dsh-p
 
 ```bash
 cd ~/.dsh/profiles/desktop
-pnpm add dsh-providers-hub-plus@<版本>
+pnpm add dsh-providers-hub-lite@<版本>
 ```
 
-装完确认三件事：`dsh.profile.bundles` 里有 `dsh-providers-hub-plus`；
-`node_modules/dsh-providers-hub-plus/package.json` 版本正确；**旧包 `dsh-providers-hub` 已从 dependencies 移除**。
+装完确认三件事：`dsh.profile.bundles` 里有 `dsh-providers-hub-lite`；
+`node_modules/dsh-providers-hub-lite/package.json` 版本正确；**旧包 `dsh-providers-hub` 已从 dependencies 移除**。
 升级后需要重启 DSH 才会加载新的客户端产物。
 
 ## 7. 常见坑

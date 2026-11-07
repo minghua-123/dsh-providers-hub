@@ -14,7 +14,7 @@
 //
 // 产物结构：
 //
-//   dsh-providers-hub-plus-<ver>-win-x64\
+//   dsh-providers-hub-lite-<ver>-win-x64\
 //   ├─ MANIFEST.json            版本 / 依赖版本 / 校验和（可审计）
 //   ├─ README.txt               部署说明
 //   ├─ install.cmd / install.ps1  目标机执行：下载宿主依赖 + 组装 profile
@@ -366,7 +366,7 @@ writeText(join(productDir, 'install.ps1'), installPs1, { bom: true })
 //    本机默认代码页恰好不触发，容易漏掉。中文提示一律交给 install.ps1 输出。
 const installCmd = `@echo off
 rem ============================================================
-rem  dsh-providers-hub-plus bootstrap bundle -- install on target host
+rem  dsh-providers-hub-lite bootstrap bundle -- install on target host
 rem  Downloads DSH host dependencies, then assembles the profile.
 rem  Node.js is auto-detected: bundled runtime\ first, then system PATH,
 rem  and if neither exists it downloads the official Node zip (~30 MB, includes npm).
@@ -387,7 +387,7 @@ exit /b %RC%
 // ⚠️ 同样必须纯 ASCII（chcp 之后不能有中文行）。
 const startCmd = `@echo off
 rem ============================================================
-rem  dsh-providers-hub-plus bootstrap bundle -- start
+rem  dsh-providers-hub-lite bootstrap bundle -- start
 rem  Run install.cmd first (downloads deps + assembles the profile).
 rem  NOTE: keep this file ASCII-only -- see build-bootstrap.mjs comment.
 rem ============================================================

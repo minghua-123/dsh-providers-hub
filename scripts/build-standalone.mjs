@@ -6,7 +6,7 @@
  *
  * 产物结构（默认 profile = prod）：
  *
- *   dsh-providers-hub-plus-<ver>-win-x64/
+ *   dsh-providers-hub-lite-<ver>-win-x64/
  *   ├─ MANIFEST.json              清单：版本 / 构建时间 / Node 版本 / 依赖清单 / 原生二进制清单
  *   ├─ README.txt                 部署说明（目录结构、启动方式、限制）
  *   ├─ start.cmd                  前台启动（自带 Node 运行时）
@@ -23,11 +23,11 @@
  *         │        ├─ lib/  package.json
  *         │        └─ node_modules/   宿主依赖闭包（真实目录扁平布局）★
  *         └─ prod/                预置 profile（免 npm install）
- *            ├─ package.json      dsh.profile.bundles = [dsh-base, dsh-web-app, dsh-providers-hub-plus]
+ *            ├─ package.json      dsh.profile.bundles = [dsh-base, dsh-web-app, dsh-providers-hub-lite]
  *            ├─ cordis.patch.yml
  *            ├─ pnpm-workspace.yaml
  *            └─ node_modules/
- *               └─ dsh-providers-hub-plus/   本插件（真实目录）
+ *               └─ dsh-providers-hub-lite/   本插件（真实目录）
  *                  ├─ lib/  locale/  cordis.patch.yml  package.json
  *                  └─ node_modules/      插件生产依赖（真实目录扁平布局）★
  *
@@ -584,7 +584,7 @@ if (existsSync(runnerSrc)) copyFileSync(runnerSrc, join(runtimeDir, 'service-run
 const startCmd = `@echo off
 chcp 65001 >nul
 rem ============================================================
-rem  dsh-providers-hub-plus 独立产物 —— 启动（自带 Node 运行时）
+rem  dsh-providers-hub-lite 独立产物 —— 启动（自带 Node 运行时）
 rem ============================================================
 setlocal EnableExtensions DisableDelayedExpansion
 set "ROOT=%~dp0"

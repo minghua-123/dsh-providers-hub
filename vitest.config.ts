@@ -4,62 +4,17 @@ import { join } from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 /**
- * 单测隔离：Jet Hub 的文件后端默认落在 `$DSH_HOME/jet-hub/state.json`，
- * 若不在测试环境里改写，用例会污染真实用户的 `~/.dsh`。
- *
- * ⚠️ **但这里的顶层 `mkdtempSync` 只跑一次** —— config 求值时执行，
- * 所有 worker 共享同一个目录，于是并行跑的 spec 会争抢同一个
- * `state.json`，造成偶发假失败（`AccountPool.addAccount` 写入竞态）。
- *
- * 真正的隔离放在 `tests/setup-isolation.ts`（`setupFiles` 对**每个测试
- * 文件**各执行一次，故每个文件独享一个目录）。这里的顶层值仅作
- * **兜底**：万一某个环境没加载 setup 文件，也仍然不会写到 `~/.dsh`。
+ * 单测隔离：插件状态文档默认落在 `$DSH_HOME/jet-hub/`，测试必须改写到临时目录，
+ * 否则会污染真实用户配置。每个 vitest 进程一个独立目录，用例之间不共享状态。
  */
-const fallbackStateDir = mkdtempSync(join(tmpdir(), 'dsh-jet-hub-fallback-'))
-
-/**
- * Qoder 设备身份：**测试里绝不能真的 spawn `runtime-info.exe`**。
- *
- * 那个可执行文件由 Qoder 桌面端分发，单次约 3.8 秒（还有 0.8 秒的暖启动）。
- * 若不禁用：① 整个套件明显变慢；② 用例结果随「开发机是否装了桌面端」而变；
- * ③ 断言会拿到**实时身份**而不是用例准备的 fixture，从而假失败。
- *
- * 指向不存在的路径即等价于「未安装」，代码会退回读 `machine_token.json`
- * （与纯插件登录用户的行为一致），用例因此可精确断言。
- */
-const noSuchRuntimeInfo = join(fallbackStateDir, 'no-such-runtime-info')
+const fallbackStateDir = mkdtempSync(join(tmpdir(), 'dsh-hub-lite-'))
 
 export default defineConfig({
   test: {
     include: ['tests/unit/**/*.spec.ts'],
-    // （PR #64 审查 3 已撤 exclude）：`cline-icon` spec 自带 skipIf/existsSync
-    // 优雅降级，依赖缺失时「通过 + 跳过」而非失败 ⇒ 无需在配置里排除——
-    // 排除反而把回归价值藏掉了。
-    //
-    // ⚠️ **`loomy-docs.spec.ts` 已删除**（2026-10-08，用户要求）：它是纯
-    // 「文档内容断言」（检查 README / AGENTS.md / agent-notes 里有没有某些词句），
-    // 而这类测试**改文档就要改测试**、且极易因「文档搬家」而假失败 ——
-    // 实测它在干净克隆里 7 条稳定变红（断言依赖不入库的 `docs/implementation-notes.md`）。
-    // 文档的正确性由人工评审与 `docs/agent-notes/` 自身承担，不由单测守。
     environment: 'node',
-    // ⚠️ 必须排在 env 之前生效：它按测试文件重设状态目录（见文件头）。
-    setupFiles: ['./tests/setup-isolation.ts'],
     env: {
       DSH_JET_HUB_STATE_DIR: fallbackStateDir,
-      QODER_RUNTIME_INFO: noSuchRuntimeInfo,
-      // ⚠️ 单测**禁止真发网络**（2026-10-30 合并审计补）：opencode 的 Bun 指纹
-      // 传输层（`wreq-js`）在本机装得上时绕过所有网络桩，对上游真发请求。
-      // `bunTlsFetch` 见此 env 即抛 `BunTlsUnavailableError` ⇒ 适配器按既有
-      // 回退路径走 `proxyFetch` ⇒ 旧的 `vi.stubGlobal('fetch')` /
-      // `vi.mock('undici')` 桩重新生效。e2e 配置（vitest.e2e.config.ts）
-      // **不注入**本 env ⇒ 真机验收路径不受影响；生产环境同样不设。
-      DSH_UNIT_TEST_NO_WREQ: '1',
-      // ⚠️ 同一条纪律的**第二面**（2026-11-06）：opencode 的「本机官方客户端桥」
-      // （`src/opencode-local-bridge.ts`）会读 `~/.local/state/opencode/service.json`
-      // 并真的向 `http://127.0.0.1:28894` 建会话生成。开发机装着官方客户端时，
-      // 单测就会真花免费额度，且「已发请求数」类断言会多一次 `/api/info` 探测
-      // 而假失败。本 env 只影响单测；e2e 与生产都不设置。
-      DSH_UNIT_TEST_NO_LOCAL_BRIDGE: '1',
     },
   },
 })

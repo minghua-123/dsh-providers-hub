@@ -3,7 +3,7 @@
 // ## 为什么需要这一步（2026-10-24 事故）
 //
 // `tsc` 的 outDir 是 `lib/`，客户端 esbuild 也输出到 `lib/client/jet-hub.js`，
-// 但发布产物在 `dist/bootstrap/dsh-providers-hub-plus-*/plugin/lib/` —— **两者之间没有
+// 但发布产物在 `dist/bootstrap/dsh-providers-hub-lite-*/plugin/lib/` —— **两者之间没有
 // 任何脚本负责同步**。结果是：`npm run build:all` 显示成功（exit 0），产物却一直
 // 停留在上一次手工拷贝的时间（实测停了 2 天）。
 //
@@ -21,7 +21,7 @@
 // 若 `lib/` 里删掉了某个模块，产物会残留一份旧文件，这种情况在输出里提示。
 //
 // ⚠️ 2026-10-31 审计（P1）：standalone 产物是同一个事故的敞口 —— 它的插件 lib 在
-//    `dist/standalone/dsh-providers-hub-plus-*/home/profiles/<profile>/node_modules/<plugin>/lib/`
+//    `dist/standalone/dsh-providers-hub-lite-*/home/profiles/<profile>/node_modules/<plugin>/lib/`
 //    （布局见 build-standalone.mjs 的「组装 profile」一节），此前完全不在覆盖范围。
 //    现已纳入同一遍历，语义与 bootstrap 相同：只新增与覆盖、绝不删除。
 //
@@ -40,7 +40,7 @@ const packageRoot = resolve(scriptDir, '..')
 const SRC = resolve(packageRoot, 'lib')
 const BOOTSTRAP_ROOT = resolve(packageRoot, 'dist/bootstrap')
 const STANDALONE_ROOT = resolve(packageRoot, 'dist/standalone')
-const BUNDLE_PREFIX = 'dsh-providers-hub-plus-'
+const BUNDLE_PREFIX = 'dsh-providers-hub-lite-'
 
 /** 递归列出 `dir` 下所有文件的绝对路径。 */
 async function walk(dir) {
@@ -71,7 +71,7 @@ async function standalonePluginLibsOf(bundleDir) {
   const out = []
   for (const entry of await readdir(profilesDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
-    const candidate = join(profilesDir, entry.name, 'node_modules', 'dsh-providers-hub-plus', 'lib')
+    const candidate = join(profilesDir, entry.name, 'node_modules', 'dsh-providers-hub-lite', 'lib')
     if (existsSync(candidate)) out.push(candidate)
   }
   return out
